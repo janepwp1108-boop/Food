@@ -1,0 +1,332 @@
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  Image,
+  TouchableOpacity,
+  ActivityIndicator,
+  TextInput,
+} from "react-native";
+
+import COLORS from "../constants/colors";
+import { useEffect, useState } from "react";
+import {
+  getRandomMeal,
+  searchMeals,
+  getAreaMeals,
+} from "../services/mealApi";
+import LanguageToggle from "../components/LanguageToggle";
+import { useLanguage } from "../context/LanguageContext";
+import { translateText } from "../services/translateApi";
+
+const AREAS = [
+  { key: "Thai", label: "Thai Food", icon: "🍜" },
+  { key: "Chinese", label: "Chinese Food", icon: "🥡" },
+  { key: "Japanese", label: "Japanese Food", icon: "🍣" },
+  
+];
+
+export default function HomeScreen({ navigation }) {
+  const { language } = useLanguage();
+
+  const [searchKeyword, setSearchKeyword] = useState("");
+
+  const [recommended, setRecommended] = useState(null);
+  const [popular, setPopular] = useState([]);
+  const [areaMeals, setAreaMeals] = useState({});
+  const [loading, setLoading] = useState(true);
+
+  const [recommendedName, setRecommendedName] = useState("");
+  const [mealNames, setMealNames] = useState({});
+
+  // โหลดข้อมูลทั้งหมด: แนะนำวันนี้ + popular + แต่ละชาติอาหาร
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const [randomMeal, popularList, ...areaResults] = await Promise.all([
+          getRandomMeal(),
+          searchMeals("chicken"),
+          ...AREAS.map((a) => getAreaMeals(a.key)),
+        ]);
+
+        setRecommended(randomMeal || null);
+        setPopular(popularList || []);
+
+        const areaData = {};
+        AREAS.forEach((a, index) => {
+          // จำกัดแค่ 10 เมนูต่อชาติ กัน list ยาวเกินไป
+          areaData[a.key] = (areaResults[index] || []).slice(0, 20);
+        });
+        setAreaMeals(areaData);
+      } catch (error) {
+        console.log("Error loading meals:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadData();
+  }, []);
+
+  // แปลชื่อเมนูทั้งหมดเมื่อสลับภาษา หรือข้อมูลโหลดเสร็จ
+  useEffect(() => {
+    const translateAllNames = async () => {
+      const allMeals = [
+        ...popular,
+        ...Object.values(areaMeals).flat(),
+      ];
+
+      if (language === "en") {
+        setRecommendedName(recommended ? recommended.strMeal : "");
+        const original = {};
+        allMeals.forEach((m) => (original[m.idMeal] = m.strMeal));
+        setMealNames(original);
+        return;
+      }
+
+      if (recommended) {
+        const translated = await translateText(recommended.strMeal, "th");
+        setRecommendedName(translated);
+      }
+
+      const translatedNames = {};
+      for (const meal of allMeals) {
+        translatedNames[meal.idMeal] = await translateText(meal.strMeal, "th");
+      }
+      setMealNames(translatedNames);
+    };
+
+    translateAllNames();
+  }, [language, popular, areaMeals, recommended]);
+
+  const handleSearchSubmit = () => {
+    if (searchKeyword.trim() === "") return;
+    navigation.navigate("Search", { keyword: searchKeyword.trim() });
+    setSearchKeyword("");
+  };
+
+  const renderMealRow = (title, icon, list) => (
+    <View style={styles.section} key={title}>
+      <Text style={styles.sectionTitle}>
+        {icon} {title}
+      </Text>
+
+      {list.length === 0 ? (
+        <View style={styles.placeholder}>
+          <Text style={styles.placeholderText}>No recipes found</Text>
+        </View>
+      ) : (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ marginTop: 15 }}
+        >
+          {list.map((meal) => (
+            <TouchableOpacity
+              key={meal.idMeal}
+              style={styles.card}
+              onPress={() =>
+                navigation.navigate("Detail", { id: meal.idMeal })
+              }
+            >
+              <Image
+                source={{ uri: meal.strMealThumb }}
+                style={styles.cardImage}
+              />
+              <Text style={styles.cardText} numberOfLines={1}>
+                {mealNames[meal.idMeal] || meal.strMeal}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
+    </View>
+  );
+
+  return (
+    <ScrollView
+      style={styles.container}
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={styles.headerRow}>
+        <Text style={styles.greeting}>
+          👋 Good Morning
+        </Text>
+
+        <LanguageToggle />
+      </View>
+
+      <Text style={styles.title}>
+        What would you like to cook today?
+      </Text>
+
+      {/* ช่องค้นหาวัตถุดิบ */}
+      <View style={styles.searchBox}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="ค้นหาจากวัตถุดิบ เช่น chicken, egg..."
+          placeholderTextColor={COLORS.subText}
+          value={searchKeyword}
+          onChangeText={setSearchKeyword}
+          onSubmitEditing={handleSearchSubmit}
+          returnKeyType="search"
+        />
+
+        <TouchableOpacity
+          style={styles.searchButton}
+          onPress={handleSearchSubmit}
+        >
+          <Text style={styles.searchButtonText}>🔍</Text>
+        </TouchableOpacity>
+      </View>
+
+      <TouchableOpacity
+        style={styles.banner}
+        onPress={() =>
+          recommended &&
+          navigation.navigate("Detail", { id: recommended.idMeal })
+        }
+      >
+        <Text style={styles.bannerTitle}>
+          Today's Recommendation
+        </Text>
+
+        <Text style={styles.bannerFood}>
+          🍝 {recommendedName || "Loading..."}
+        </Text>
+      </TouchableOpacity>
+
+      {loading ? (
+        <ActivityIndicator
+          size="large"
+          color={COLORS.primary}
+          style={{ marginTop: 30 }}
+        />
+      ) : (
+        <>
+          {renderMealRow("Popular Recipes", "🔥", popular)}
+
+          {AREAS.map((area) =>
+            renderMealRow(area.label, area.icon, areaMeals[area.key] || [])
+          )}
+        </>
+      )}
+
+      <View style={{ height: 30 }} />
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+    padding: 20,
+  },
+
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 40,
+  },
+
+  greeting: {
+    color: COLORS.subText,
+    fontSize: 16,
+  },
+
+  title: {
+    color: COLORS.white,
+    fontSize: 28,
+    fontWeight: "bold",
+    marginTop: 10,
+  },
+
+  searchBox: {
+    flexDirection: "row",
+    marginTop: 20,
+  },
+
+  searchInput: {
+    flex: 1,
+    backgroundColor: COLORS.card,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    color: COLORS.white,
+    fontSize: 15,
+  },
+
+  searchButton: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    justifyContent: "center",
+    marginLeft: 10,
+  },
+
+  searchButtonText: {
+    fontSize: 18,
+  },
+
+  banner: {
+    marginTop: 20,
+    backgroundColor: COLORS.primary,
+    borderRadius: 20,
+    padding: 25,
+  },
+
+  bannerTitle: {
+    color: COLORS.white,
+    fontSize: 15,
+  },
+
+  bannerFood: {
+    color: COLORS.white,
+    fontSize: 24,
+    fontWeight: "bold",
+    marginTop: 10,
+  },
+
+  section: {
+    marginTop: 30,
+  },
+
+  sectionTitle: {
+    color: COLORS.white,
+    fontSize: 20,
+    fontWeight: "bold",
+  },
+
+  placeholder: {
+    marginTop: 15,
+    height: 150,
+    backgroundColor: COLORS.card,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  placeholderText: {
+    color: COLORS.subText,
+  },
+
+  card: {
+    width: 150,
+    marginRight: 15,
+  },
+
+  cardImage: {
+    width: 150,
+    height: 150,
+    borderRadius: 16,
+    backgroundColor: COLORS.card,
+  },
+
+  cardText: {
+    color: COLORS.white,
+    marginTop: 8,
+    fontWeight: "600",
+  },
+});
