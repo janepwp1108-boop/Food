@@ -1,10 +1,9 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
-  Image,
   TouchableOpacity,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
@@ -12,9 +11,21 @@ import { useFocusEffect } from "@react-navigation/native";
 import COLORS from "../constants/colors";
 import { getFavorites, removeFavorite } from "../storage/favoriteStorage";
 import FavoriteButton from "../components/FavoriteButton";
+import CachedImage from "../components/CachedImage";
+import LanguageToggle from "../components/LanguageToggle";
+import { useLanguage } from "../context/LanguageContext";
+import { translateText } from "../services/translateCache";
 
 export default function FavoriteScreen({ navigation }) {
+  const { language } = useLanguage();
+
   const [favorites, setFavorites] = useState([]);
+  const [mealNames, setMealNames] = useState({});
+  const [mealCategories, setMealCategories] = useState({});
+  const [texts, setTexts] = useState({
+    title: "Favorite Recipes",
+    subtitle: "Your saved recipes will appear here.",
+  });
 
   // โหลดข้อมูลใหม่ทุกครั้งที่กลับมาที่หน้านี้ (เผื่อเพิ่ง unfavorite จากหน้า Detail)
   useFocusEffect(
@@ -27,32 +38,91 @@ export default function FavoriteScreen({ navigation }) {
     }, [])
   );
 
+  // แปลชื่อเมนู/หมวดหมู่ของแต่ละสูตรอาหาร
+  useEffect(() => {
+    const translateMeals = async () => {
+      if (language === "en") {
+        const names = {};
+        const cats = {};
+        favorites.forEach((m) => {
+          names[m.idMeal] = m.strMeal;
+          cats[m.idMeal] = m.strCategory;
+        });
+        setMealNames(names);
+        setMealCategories(cats);
+        return;
+      }
+
+      const names = {};
+      const cats = {};
+      for (const meal of favorites) {
+        names[meal.idMeal] = await translateText(meal.strMeal, "th");
+        cats[meal.idMeal] = await translateText(meal.strCategory, "th");
+      }
+      setMealNames(names);
+      setMealCategories(cats);
+    };
+    translateMeals();
+  }, [language, favorites]);
+
+  // แปลข้อความคงที่ของหน้านี้
+  useEffect(() => {
+    const translateStaticTexts = async () => {
+      if (language === "en") {
+        setTexts({
+          title: "Favorite Recipes",
+          subtitle: "Your saved recipes will appear here.",
+        });
+        return;
+      }
+
+      const [title, subtitle] = await Promise.all([
+        translateText("Favorite Recipes", "th"),
+        translateText("Your saved recipes will appear here.", "th"),
+      ]);
+
+      setTexts({ title, subtitle });
+    };
+    translateStaticTexts();
+  }, [language]);
+
   const handleRemove = async (idMeal) => {
     await removeFavorite(idMeal);
     setFavorites((prev) => prev.filter((item) => item.idMeal !== idMeal));
   };
 
+  const HeaderBar = () => (
+    <View style={styles.headerRow}>
+      <TouchableOpacity
+        style={styles.homeButton}
+        onPress={() => navigation.navigate("Home")}
+      >
+        <Text style={styles.homeButtonText}>🏠</Text>
+      </TouchableOpacity>
+
+      <LanguageToggle />
+    </View>
+  );
+
   if (favorites.length === 0) {
     return (
       <View style={styles.container}>
+        <HeaderBar />
+
         <Text style={styles.icon}>❤️</Text>
 
-        <Text style={styles.title}>
-          Favorite Recipes
-        </Text>
+        <Text style={styles.title}>{texts.title}</Text>
 
-        <Text style={styles.subtitle}>
-          Your saved recipes will appear here.
-        </Text>
+        <Text style={styles.subtitle}>{texts.subtitle}</Text>
       </View>
     );
   }
 
   return (
     <View style={styles.listContainer}>
-      <Text style={styles.headerTitle}>
-        ❤️ Favorite Recipes
-      </Text>
+      <HeaderBar />
+
+      <Text style={styles.headerTitle}>❤️ {texts.title}</Text>
 
       <FlatList
         data={favorites}
@@ -65,18 +135,18 @@ export default function FavoriteScreen({ navigation }) {
               navigation.navigate("Detail", { id: item.idMeal })
             }
           >
-            <Image
+            <CachedImage
               source={{ uri: item.strMealThumb }}
               style={styles.cardImage}
             />
 
             <View style={styles.cardInfo}>
               <Text style={styles.cardTitle} numberOfLines={1}>
-                {item.strMeal}
+                {mealNames[item.idMeal] || item.strMeal}
               </Text>
 
               <Text style={styles.cardCategory}>
-                {item.strCategory}
+                {mealCategories[item.idMeal] || item.strCategory}
               </Text>
             </View>
 
@@ -105,6 +175,30 @@ const styles = StyleSheet.create({
     padding: 20,
   },
 
+  headerRow: {
+    position: "absolute",
+    top: 50,
+    left: 20,
+    right: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    zIndex: 10,
+  },
+
+  homeButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: COLORS.card,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  homeButtonText: {
+    fontSize: 20,
+  },
+
   icon: {
     fontSize: 70,
   },
@@ -131,7 +225,7 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontSize: 24,
     fontWeight: "bold",
-    marginTop: 50,
+    marginTop: 100,
     marginLeft: 20,
   },
 

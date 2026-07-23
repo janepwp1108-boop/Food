@@ -3,13 +3,13 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  Image,
   TouchableOpacity,
   ActivityIndicator,
   TextInput,
 } from "react-native";
 
 import COLORS from "../constants/colors";
+import CachedImage from "../components/CachedImage";
 import { useEffect, useState } from "react";
 import {
   getRandomMeal,
@@ -18,7 +18,7 @@ import {
 } from "../services/mealApi";
 import LanguageToggle from "../components/LanguageToggle";
 import { useLanguage } from "../context/LanguageContext";
-import { translateText } from "../services/translateApi";
+import { translateText } from "../services/translateCache";
 
 const AREAS = [
   { key: "Thai", label: "Thai Food", icon: "🍜" },
@@ -26,6 +26,16 @@ const AREAS = [
   { key: "Japanese", label: "Japanese Food", icon: "🍣" },
   
 ];
+
+const DEFAULT_TEXTS = {
+  greeting: "👋 Good Morning",
+  title: "What would you like to cook today?",
+  searchPlaceholder: "Search by ingredient, e.g. chicken, egg...",
+  bannerTitle: "Today's Recommendation",
+  loadingLabel: "Loading...",
+  popularRecipes: "Popular Recipes",
+  noRecipesFound: "No recipes found",
+};
 
 export default function HomeScreen({ navigation }) {
   const { language } = useLanguage();
@@ -39,6 +49,14 @@ export default function HomeScreen({ navigation }) {
 
   const [recommendedName, setRecommendedName] = useState("");
   const [mealNames, setMealNames] = useState({});
+
+  const [texts, setTexts] = useState(DEFAULT_TEXTS);
+  const [areaLabels, setAreaLabels] = useState(
+    AREAS.reduce((acc, a) => {
+      acc[a.key] = a.label;
+      return acc;
+    }, {})
+  );
 
   // โหลดข้อมูลทั้งหมด: แนะนำวันนี้ + popular + แต่ละชาติอาหาร
   useEffect(() => {
@@ -99,6 +117,60 @@ export default function HomeScreen({ navigation }) {
     translateAllNames();
   }, [language, popular, areaMeals, recommended]);
 
+  // แปลข้อความ UI คงที่ทั้งหมดของหน้านี้ (ทุกคำทุกวรรค)
+  useEffect(() => {
+    const translateStaticTexts = async () => {
+      if (language === "en") {
+        setTexts(DEFAULT_TEXTS);
+        setAreaLabels(
+          AREAS.reduce((acc, a) => {
+            acc[a.key] = a.label;
+            return acc;
+          }, {})
+        );
+        return;
+      }
+
+      const [
+        greeting,
+        title,
+        searchPlaceholder,
+        bannerTitle,
+        loadingLabel,
+        popularRecipes,
+        noRecipesFound,
+        ...translatedAreaLabels
+      ] = await Promise.all([
+        translateText(DEFAULT_TEXTS.greeting, "th"),
+        translateText(DEFAULT_TEXTS.title, "th"),
+        translateText(DEFAULT_TEXTS.searchPlaceholder, "th"),
+        translateText(DEFAULT_TEXTS.bannerTitle, "th"),
+        translateText(DEFAULT_TEXTS.loadingLabel, "th"),
+        translateText(DEFAULT_TEXTS.popularRecipes, "th"),
+        translateText(DEFAULT_TEXTS.noRecipesFound, "th"),
+        ...AREAS.map((a) => translateText(a.label, "th")),
+      ]);
+
+      setTexts({
+        greeting,
+        title,
+        searchPlaceholder,
+        bannerTitle,
+        loadingLabel,
+        popularRecipes,
+        noRecipesFound,
+      });
+
+      const newAreaLabels = {};
+      AREAS.forEach((a, index) => {
+        newAreaLabels[a.key] = translatedAreaLabels[index];
+      });
+      setAreaLabels(newAreaLabels);
+    };
+
+    translateStaticTexts();
+  }, [language]);
+
   const handleSearchSubmit = () => {
     if (searchKeyword.trim() === "") return;
     navigation.navigate("Search", { keyword: searchKeyword.trim() });
@@ -113,7 +185,7 @@ export default function HomeScreen({ navigation }) {
 
       {list.length === 0 ? (
         <View style={styles.placeholder}>
-          <Text style={styles.placeholderText}>No recipes found</Text>
+          <Text style={styles.placeholderText}>{texts.noRecipesFound}</Text>
         </View>
       ) : (
         <ScrollView
@@ -129,7 +201,7 @@ export default function HomeScreen({ navigation }) {
                 navigation.navigate("Detail", { id: meal.idMeal })
               }
             >
-              <Image
+              <CachedImage
                 source={{ uri: meal.strMealThumb }}
                 style={styles.cardImage}
               />
@@ -150,21 +222,21 @@ export default function HomeScreen({ navigation }) {
     >
       <View style={styles.headerRow}>
         <Text style={styles.greeting}>
-          👋 Good Morning
+          {texts.greeting}
         </Text>
 
         <LanguageToggle />
       </View>
 
       <Text style={styles.title}>
-        What would you like to cook today?
+        {texts.title}
       </Text>
 
       {/* ช่องค้นหาวัตถุดิบ */}
       <View style={styles.searchBox}>
         <TextInput
           style={styles.searchInput}
-          placeholder="ค้นหาจากวัตถุดิบ เช่น chicken, egg..."
+          placeholder={texts.searchPlaceholder}
           placeholderTextColor={COLORS.subText}
           value={searchKeyword}
           onChangeText={setSearchKeyword}
@@ -188,11 +260,11 @@ export default function HomeScreen({ navigation }) {
         }
       >
         <Text style={styles.bannerTitle}>
-          Today's Recommendation
+          {texts.bannerTitle}
         </Text>
 
         <Text style={styles.bannerFood}>
-          🍝 {recommendedName || "Loading..."}
+          🍝 {recommendedName || texts.loadingLabel}
         </Text>
       </TouchableOpacity>
 
@@ -204,10 +276,14 @@ export default function HomeScreen({ navigation }) {
         />
       ) : (
         <>
-          {renderMealRow("Popular Recipes", "🔥", popular)}
+          {renderMealRow(texts.popularRecipes, "🔥", popular)}
 
           {AREAS.map((area) =>
-            renderMealRow(area.label, area.icon, areaMeals[area.key] || [])
+            renderMealRow(
+              areaLabels[area.key] || area.label,
+              area.icon,
+              areaMeals[area.key] || []
+            )
           )}
         </>
       )}

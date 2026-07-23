@@ -1,6 +1,7 @@
 import React, {
   useEffect,
-  useRef
+  useRef,
+  useState
 } from "react";
 
 
@@ -23,7 +24,10 @@ import {
 }
 from "../constants/assets";
 
+import { useLanguage } from "../context/LanguageContext";
+import { translateText } from "../services/translateCache";
 
+const DEFAULT_SUBTITLE = "Discover delicious recipes";
 
 
 
@@ -32,6 +36,10 @@ export default function SplashScreen({
   navigation
 
 }) {
+
+  const { language } = useLanguage();
+
+  const [subtitle, setSubtitle] = useState(DEFAULT_SUBTITLE);
 
 
 
@@ -134,6 +142,28 @@ export default function SplashScreen({
 
 
 
+  // แปล subtitle ตามภาษาที่เลือกไว้
+  useEffect(() => {
+    const translateSubtitle = async () => {
+      if (language === "en") {
+        setSubtitle(DEFAULT_SUBTITLE);
+        return;
+      }
+
+      try {
+        const translated = await translateText(DEFAULT_SUBTITLE, "th");
+        setSubtitle(translated);
+      } catch (error) {
+        console.log("Translate splash subtitle error:", error);
+        setSubtitle(DEFAULT_SUBTITLE);
+      }
+    };
+
+    translateSubtitle();
+  }, [language]);
+
+
+
 
 
 
@@ -198,7 +228,7 @@ export default function SplashScreen({
 
       <Text style={styles.subtitle}>
 
-        Discover delicious recipes
+        {subtitle}
 
       </Text>
 

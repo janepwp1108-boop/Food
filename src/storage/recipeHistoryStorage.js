@@ -14,7 +14,7 @@ export async function getHistory() {
 }
 
 // บันทึกเมนูที่เพิ่งเปิดดู (ไม่ซ้ำ)
-export async function addToHistory(recipe) {
+export async function addHistory(recipe) {
   try {
     const history = await getHistory();
 

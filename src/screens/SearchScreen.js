@@ -5,15 +5,19 @@ import {
   StyleSheet,
   TextInput,
   FlatList,
-  Image,
   TouchableOpacity,
   ActivityIndicator,
 } from "react-native";
 
 import COLORS from "../constants/colors";
-import { searchMeals } from "../services/mealApi";
+import { searchMeals, searchMealsByName } from "../services/mealApi";
 import LanguageToggle from "../components/LanguageToggle";
+import CachedImage from "../components/CachedImage";
 import { useLanguage } from "../context/LanguageContext";
+import { translateText } from "../services/translateCache";
+
+// เช็คว่าข้อความมีตัวอักษรไทยอยู่หรือไม่
+const containsThai = (text) => /[\u0E00-\u0E7F]/.test(text);
 
 export default function SearchScreen({ navigation, route }) {
   const { language } = useLanguage();
@@ -22,8 +26,11 @@ export default function SearchScreen({ navigation, route }) {
 
   const [keyword, setKeyword] = useState(initialKeyword);
   const [results, setResults] = useState([]);
+  const [mealNames, setMealNames] = useState({});
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
+  // โหมดค้นหา: "ingredient" = ค้นหาด้วยวัตถุดิบ (เดิม), "name" = ค้นหาด้วยชื่อเมนู (เพิ่มใหม่)
+  const [searchMode, setSearchMode] = useState("ingredient");
 
   const handleSearch = async (searchKeyword) => {
     const term = (searchKeyword ?? keyword).trim();
@@ -34,7 +41,23 @@ export default function SearchScreen({ navigation, route }) {
     setSearched(true);
 
     try {
-      const data = await searchMeals(term);
+      // ฐานข้อมูลสูตรอาหารเป็นภาษาอังกฤษ ถ้าพิมพ์มาเป็นไทยต้องแปลเป็นอังกฤษก่อนค้นหา
+      let searchTerm = term;
+      if (containsThai(term)) {
+        try {
+          const translated = await translateText(term, "en", "th");
+          // filter.php ของ TheMealDB จับคู่วัตถุดิบแบบตรงตัว ปรับให้เป็นตัวพิมพ์เล็กเพื่อโอกาสจับคู่สูงขึ้น
+          searchTerm = translated.trim().toLowerCase();
+        } catch (translateError) {
+          console.log("Translate search term error:", translateError);
+          searchTerm = term;
+        }
+      }
+
+      const data =
+        searchMode === "name"
+          ? await searchMealsByName(searchTerm)
+          : await searchMeals(searchTerm);
       setResults(data || []);
     } catch (error) {
       console.log("Search Error:", error);
@@ -44,11 +67,47 @@ export default function SearchScreen({ navigation, route }) {
     }
   };
 
+  // สลับโหมดค้นหา แล้วเคลียร์ผลลัพธ์เก่าเพื่อไม่ให้สับสนว่าผลลัพธ์มาจากโหมดไหน
+  const handleModeChange = (mode) => {
+    if (mode === searchMode) return;
+    setSearchMode(mode);
+    setResults([]);
+    setSearched(false);
+  };
+
+  // กลับหน้า Home อย่างปลอดภัย ไม่พึ่งชื่อ route ที่อาจไม่ตรงกับ navigator จริง
+  const goHome = () => {
+    if (navigation.canGoBack()) {
+      navigation.popToTop();
+    } else {
+      navigation.navigate("Home");
+    }
+  };
+
   useEffect(() => {
     if (initialKeyword) {
       handleSearch(initialKeyword);
     }
   }, [initialKeyword]);
+
+  // แปลชื่อเมนูของผลการค้นหาเมื่อผลลัพธ์เปลี่ยน หรือมีการสลับภาษา
+  useEffect(() => {
+    const translateResultNames = async () => {
+      if (language === "en") {
+        const original = {};
+        results.forEach((m) => (original[m.idMeal] = m.strMeal));
+        setMealNames(original);
+        return;
+      }
+
+      const translated = {};
+      for (const meal of results) {
+        translated[meal.idMeal] = await translateText(meal.strMeal, "th");
+      }
+      setMealNames(translated);
+    };
+    translateResultNames();
+  }, [language, results]);
 
   return (
     <View style={styles.container}>
@@ -58,7 +117,7 @@ export default function SearchScreen({ navigation, route }) {
 
         <TouchableOpacity
           style={styles.backButton}
-          onPress={() => navigation.navigate("Home")}
+          onPress={goHome}
         >
           <Text style={styles.backText}>←</Text>
         </TouchableOpacity>
@@ -73,13 +132,54 @@ export default function SearchScreen({ navigation, route }) {
 
       </View>
 
+      {/* สลับโหมดค้นหา: วัตถุดิบ / ชื่อเมนู */}
+      <View style={styles.modeRow}>
+        <TouchableOpacity
+          style={[
+            styles.modeButton,
+            searchMode === "ingredient" && styles.modeButtonActive,
+          ]}
+          onPress={() => handleModeChange("ingredient")}
+        >
+          <Text
+            style={[
+              styles.modeButtonText,
+              searchMode === "ingredient" && styles.modeButtonTextActive,
+            ]}
+          >
+            {language === "th" ? "🥕 วัตถุดิบ" : "🥕 Ingredient"}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.modeButton,
+            searchMode === "name" && styles.modeButtonActive,
+          ]}
+          onPress={() => handleModeChange("name")}
+        >
+          <Text
+            style={[
+              styles.modeButtonText,
+              searchMode === "name" && styles.modeButtonTextActive,
+            ]}
+          >
+            {language === "th" ? "🍽️ ชื่อเมนู" : "🍽️ Meal Name"}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       {/* Search Box */}
       <View style={styles.searchBox}>
         <TextInput
           style={styles.input}
           placeholder={
-            language === "th"
-              ? "ค้นหาด้วยวัตถุดิบ เช่น chicken"
+            searchMode === "name"
+              ? language === "th"
+                ? "ค้นหาด้วยชื่อเมนู เช่น Pad Thai หรือ ผัดไทย"
+                : "Search by meal name (e.g. Pad Thai)"
+              : language === "th"
+              ? "ค้นหาด้วยวัตถุดิบ เช่น chicken หรือ ไก่"
               : "Search by ingredient (e.g. chicken)"
           }
           placeholderTextColor={COLORS.subText}
@@ -133,8 +233,11 @@ export default function SearchScreen({ navigation, route }) {
 
           <Text style={styles.subtitle}>
             {language === "th"
-              ? "ลองค้นหาด้วยวัตถุดิบอื่น"
-              : "Try searching with a different ingredient."}
+              ? "ลองค้นหาด้วย" +
+                (searchMode === "name" ? "ชื่อเมนูอื่น" : "วัตถุดิบอื่น")
+              : `Try searching with a different ${
+                  searchMode === "name" ? "name" : "ingredient"
+                }.`}
           </Text>
         </View>
       ) : (
@@ -152,7 +255,7 @@ export default function SearchScreen({ navigation, route }) {
                 })
               }
             >
-              <Image
+              <CachedImage
                 source={{ uri: item.strMealThumb }}
                 style={styles.cardImage}
               />
@@ -161,7 +264,7 @@ export default function SearchScreen({ navigation, route }) {
                 style={styles.cardTitle}
                 numberOfLines={2}
               >
-                {item.strMeal}
+                {mealNames[item.idMeal] || item.strMeal}
               </Text>
             </TouchableOpacity>
           )}
@@ -210,6 +313,36 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     marginHorizontal: 20,
     marginTop: 20,
+  },
+
+  modeRow: {
+    flexDirection: "row",
+    marginHorizontal: 20,
+    marginTop: 20,
+    backgroundColor: COLORS.card,
+    borderRadius: 14,
+    padding: 4,
+  },
+
+  modeButton: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: "center",
+  },
+
+  modeButtonActive: {
+    backgroundColor: COLORS.primary,
+  },
+
+  modeButtonText: {
+    color: COLORS.subText,
+    fontWeight: "600",
+    fontSize: 13,
+  },
+
+  modeButtonTextActive: {
+    color: COLORS.white,
   },
 
   input: {

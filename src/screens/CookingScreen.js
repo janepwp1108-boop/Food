@@ -4,125 +4,199 @@ import {
   Text,
   StyleSheet,
   FlatList,
-  Image,
   TouchableOpacity,
+  ActivityIndicator,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 
 import COLORS from "../constants/colors";
-import { getFavorites } from "../storage/favoriteStorage";
+import { getRandomMeals } from "../services/mealApi";
+import LanguageToggle from "../components/LanguageToggle";
+import CachedImage from "../components/CachedImage";
+import { useLanguage } from "../context/LanguageContext";
+import { translateText } from "../services/translateCache";
+
+const RECOMMEND_COUNT = 8;
 
 export default function CookingScreen({ navigation }) {
-  const [favorites, setFavorites] = useState([]);
+  const { language } = useLanguage();
+
+  const [recommended, setRecommended] = useState([]);
+  const [mealNames, setMealNames] = useState({});
+  const [mealCategories, setMealCategories] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [texts, setTexts] = useState({
+    title: "Cooking Mode",
+    subtitle: "Here's what you could cook today.",
+    shuffle: "🔀 Shuffle",
+  });
+
+  // สุ่มเมนูแนะนำใหม่ ทุกครั้งที่เปิดเข้ามาที่หน้านี้
+  const loadRecommended = useCallback(async () => {
+    setLoading(true);
+    try {
+      const meals = await getRandomMeals(RECOMMEND_COUNT);
+      setRecommended(meals);
+    } catch (error) {
+      console.log("Load random recommendations error:", error.message || error);
+      setRecommended([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
-      const loadFavorites = async () => {
-        const data = await getFavorites();
-        setFavorites(data);
-      };
-      loadFavorites();
-    }, [])
+      loadRecommended();
+    }, [loadRecommended])
   );
 
-  if (favorites.length === 0) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.icon}>👨‍🍳</Text>
+  // แปลชื่อเมนู/หมวดหมู่ของแต่ละสูตรอาหาร
+  React.useEffect(() => {
+    const translateMeals = async () => {
+      if (language === "en") {
+        const names = {};
+        const cats = {};
+        recommended.forEach((m) => {
+          names[m.idMeal] = m.strMeal;
+          cats[m.idMeal] = m.strCategory;
+        });
+        setMealNames(names);
+        setMealCategories(cats);
+        return;
+      }
 
-        <Text style={styles.title}>
-          Cooking Mode
-        </Text>
+      const names = {};
+      const cats = {};
+      for (const meal of recommended) {
+        names[meal.idMeal] = await translateText(meal.strMeal, "th");
+        cats[meal.idMeal] = await translateText(meal.strCategory, "th");
+      }
+      setMealNames(names);
+      setMealCategories(cats);
+    };
+    translateMeals();
+  }, [language, recommended]);
 
-        <Text style={styles.subtitle}>
-          Choose a recipe to start cooking.
-        </Text>
+  // แปลข้อความคงที่ของหน้านี้
+  React.useEffect(() => {
+    const translateStaticTexts = async () => {
+      if (language === "en") {
+        setTexts({
+          title: "Cooking Mode",
+          subtitle: "Here's what you could cook today.",
+          shuffle: "🔀 Shuffle",
+        });
+        return;
+      }
 
-        <Text style={styles.hint}>
-          Save recipes to Favorites first, then they'll show up here.
-        </Text>
-      </View>
-    );
-  }
+      const [title, subtitle, shuffle] = await Promise.all([
+        translateText("Cooking Mode", "th"),
+        translateText("Here's what you could cook today.", "th"),
+        translateText("Shuffle", "th"),
+      ]);
+
+      setTexts({ title, subtitle, shuffle: `🔀 ${shuffle}` });
+    };
+    translateStaticTexts();
+  }, [language]);
+
+  const HeaderBar = () => (
+    <View style={styles.headerRow}>
+      <TouchableOpacity
+        style={styles.homeButton}
+        onPress={() => navigation.navigate("Home")}
+      >
+        <Text style={styles.homeButtonText}>🏠</Text>
+      </TouchableOpacity>
+
+      <LanguageToggle />
+    </View>
+  );
 
   return (
     <View style={styles.listContainer}>
+      <HeaderBar />
+
       <Text style={styles.headerIcon}>👨‍🍳</Text>
 
-      <Text style={styles.headerTitle}>
-        Cooking Mode
-      </Text>
+      <Text style={styles.headerTitle}>{texts.title}</Text>
 
-      <Text style={styles.headerSubtitle}>
-        Choose a recipe to start cooking.
-      </Text>
+      <Text style={styles.headerSubtitle}>{texts.subtitle}</Text>
 
-      <FlatList
-        data={favorites}
-        keyExtractor={(item) => item.idMeal}
-        contentContainerStyle={{ padding: 20 }}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.card}
-            onPress={() =>
-              navigation.navigate("Detail", { id: item.idMeal })
-            }
-          >
-            <Image
-              source={{ uri: item.strMealThumb }}
-              style={styles.cardImage}
-            />
+      <TouchableOpacity
+        style={styles.shuffleButton}
+        onPress={loadRecommended}
+        disabled={loading}
+      >
+        <Text style={styles.shuffleButtonText}>{texts.shuffle}</Text>
+      </TouchableOpacity>
 
-            <View style={styles.cardInfo}>
-              <Text style={styles.cardTitle} numberOfLines={1}>
-                {item.strMeal}
-              </Text>
+      {loading ? (
+        <ActivityIndicator
+          size="large"
+          color={COLORS.primary}
+          style={{ marginTop: 30 }}
+        />
+      ) : (
+        <FlatList
+          data={recommended}
+          keyExtractor={(item) => item.idMeal}
+          contentContainerStyle={{ padding: 20 }}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={styles.card}
+              onPress={() =>
+                navigation.navigate("Detail", { id: item.idMeal })
+              }
+            >
+              <CachedImage
+                source={{ uri: item.strMealThumb }}
+                style={styles.cardImage}
+              />
 
-              <Text style={styles.cardCategory}>
-                {item.strCategory}
-              </Text>
-            </View>
+              <View style={styles.cardInfo}>
+                <Text style={styles.cardTitle} numberOfLines={1}>
+                  {mealNames[item.idMeal] || item.strMeal}
+                </Text>
 
-            <Text style={styles.arrow}>▶️</Text>
-          </TouchableOpacity>
-        )}
-      />
+                <Text style={styles.cardCategory}>
+                  {mealCategories[item.idMeal] || item.strCategory}
+                </Text>
+              </View>
+
+              <Text style={styles.arrow}>▶️</Text>
+            </TouchableOpacity>
+          )}
+        />
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
+  headerRow: {
+    position: "absolute",
+    top: 50,
+    left: 20,
+    right: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    zIndex: 10,
+  },
+
+  homeButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: COLORS.card,
     justifyContent: "center",
     alignItems: "center",
-    padding: 20,
   },
 
-  icon: {
-    fontSize: 70,
-  },
-
-  title: {
-    color: COLORS.white,
-    fontSize: 28,
-    fontWeight: "bold",
-    marginTop: 15,
-  },
-
-  subtitle: {
-    color: COLORS.subText,
-    marginTop: 10,
-    textAlign: "center",
-  },
-
-  hint: {
-    color: COLORS.subText,
-    marginTop: 20,
-    textAlign: "center",
-    fontSize: 13,
-    opacity: 0.7,
+  homeButtonText: {
+    fontSize: 20,
   },
 
   listContainer: {
@@ -133,7 +207,7 @@ const styles = StyleSheet.create({
   headerIcon: {
     fontSize: 40,
     textAlign: "center",
-    marginTop: 50,
+    marginTop: 100,
   },
 
   headerTitle: {
@@ -148,6 +222,20 @@ const styles = StyleSheet.create({
     color: COLORS.subText,
     textAlign: "center",
     marginTop: 5,
+  },
+
+  shuffleButton: {
+    alignSelf: "center",
+    marginTop: 15,
+    backgroundColor: COLORS.primary,
+    borderRadius: 14,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+  },
+
+  shuffleButtonText: {
+    color: COLORS.white,
+    fontWeight: "600",
   },
 
   card: {
